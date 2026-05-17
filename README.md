@@ -1,6 +1,6 @@
-# ShopPro — Shop Management System
+# RetailFlow — Retail Management System
 
-A full-stack shop management web application built with **Node.js + Express + MongoDB** (backend) and **React + Vite** (frontend).
+A full-stack retail management web application built with **Node.js + Express + MongoDB** (backend) and **React + Vite** (frontend).
 
 ---
 
