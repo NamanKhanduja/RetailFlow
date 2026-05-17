@@ -8,7 +8,7 @@ A full-stack retail management web application built with **Node.js + Express + 
 
 ### Prerequisites
 - Node.js v18+
-- MongoDB running locally (default port 27017)
+- MongoDB running locally 
 
 ### 1. Start MongoDB
 ```bash
@@ -20,19 +20,16 @@ net start MongoDB
 ```bash
 cd backend
 npm install        # first time only
-npm run dev        # runs on http://localhost:5000
+npm run dev       
 ```
 
 ### 3. Start the Frontend
 ```bash
 cd frontend
 npm install        # first time only
-npm run dev        # runs on http://localhost:5173
+npm run dev        
 ```
 
-Open **http://localhost:5173** in your browser.
-
----
 
 ## 📁 Project Structure
 
@@ -82,10 +79,3 @@ All protected routes require: `Authorization: Bearer <token>`
 - 📊 **Dashboard** — Revenue/profit area chart, low-stock alerts, recent orders
 
 ---
-
-## 🔮 Phase 2 (Flutter Mobile App)
-
-The backend API is **Flutter-ready** from day one:
-- All endpoints versioned under `/api/v1/`
-- Stateless JWT authentication (same Bearer token pattern)
-- Consistent JSON response format: `{ success, data, count, message }`
