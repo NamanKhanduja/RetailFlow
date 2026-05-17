@@ -1,7 +1,7 @@
 {
-  "name": "shop-management-backend",
+  "name": "retailflow-backend",
   "version": "1.0.0",
-  "description": "RESTful API for Shop Management System",
+  "description": "RESTful API for RetailFlow",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

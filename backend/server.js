@@ -64,7 +64,7 @@ app.use('/api/v1/employees', require('./routes/employeeRoutes'));
 app.get('/api/v1/health', (req, res) => {
   res.status(200).json({
     success: true,
-    message: '🟢 Shop Management API is running.',
+    message: '🟢 RetailFlow API is running.',
     version: '1.0.0',
     environment: process.env.NODE_ENV,
   });

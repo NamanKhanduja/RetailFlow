@@ -26,7 +26,7 @@ async function req(method, path, body, auth = true) {
 
 async function run() {
   console.log('\n═══════════════════════════════════════════════');
-  console.log('  ShopPro — Full API Test Suite');
+  console.log('  RetailFlow — Full API Test Suite');
   console.log('═══════════════════════════════════════════════\n');
 
   // ── 1. HEALTH CHECK ───────────────────────────────────────────────────────
@@ -42,9 +42,9 @@ async function run() {
   // Register (might fail if email already exists — that's OK)
   try {
     const { status, data } = await req('POST', '/auth/register', {
-      shopName: 'ShopPro Test Store',
+      shopName: 'RetailFlow Test Store',
       ownerName: 'Naman Khan',
-      email: 'testowner@shoppro.dev',
+      email: 'testowner@retailflow.dev',
       password: 'test1234',
       phone: '+91 9876543210',
       address: '123 MG Road, New Delhi',
@@ -57,7 +57,7 @@ async function run() {
   // Login
   try {
     const { data } = await req('POST', '/auth/login', {
-      email: 'testowner@shoppro.dev',
+      email: 'testowner@retailflow.dev',
       password: 'test1234',
     }, false);
     if (data.token) { TOKEN = data.token; pass('POST /auth/login'); }
