@@ -34,7 +34,7 @@ export default function Register() {
       <div className="auth-card" style={{maxWidth:460}}>
         <div className="auth-logo">
           <div className="auth-logo-icon"><Store size={22} color="#fff" /></div>
-          <h1>Shop<span>Pro</span></h1>
+          <h1>Retail<span>Flow</span></h1>
         </div>
         <h2>Set up your shop</h2>
         <p>Create your account to get started</p>

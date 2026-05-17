@@ -32,7 +32,7 @@ export default function Login() {
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon"><Store size={22} color="#fff" /></div>
-          <h1>Shop<span>Pro</span></h1>
+          <h1>Retail<span>Flow</span></h1>
         </div>
         <h2>Welcome back</h2>
         <p>Sign in to manage your shop</p>
