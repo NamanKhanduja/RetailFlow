@@ -13,6 +13,7 @@ export const VoiceProvider = ({ children }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
+  const [history, setHistory] = useState([]);
   
   // Initialize Speech Recognition ONCE
   const [recognition] = useState(() => {
@@ -48,9 +49,13 @@ export const VoiceProvider = ({ children }) => {
   const processCommand = async (text) => {
     setIsProcessing(true);
     try {
-      // 1. Send to our Backend AI Agent
-      const response = await api.post('/ai/assistant', { text });
+      // 1. Send to our Backend AI Agent with history
+      const currentHistory = [...history, { role: 'User', content: text }];
+      const response = await api.post('/ai/assistant', { text, history: currentHistory });
       const actionData = response.data;
+
+      // Update history with AI response
+      setHistory([...currentHistory, { role: 'Assistant', content: actionData.spokenResponse || 'Action performed silently.' }]);
 
       // 2. Handle Navigation if requested
       if (actionData.navigationTarget) {

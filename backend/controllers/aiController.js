@@ -32,8 +32,8 @@ You must respond with the following strict JSON structure:
 {
   "intent": "FETCH_DATA" | "MUTATE_DATA" | "NAVIGATE" | "ASK_CLARIFICATION",
   "internalAction": {
-    "actionType": "GET_REVENUE" | "MARK_ATTENDANCE" | "CREATE_ORDER" | "GET_LOW_STOCK" | null,
-    "payload": {} // Any extracted data needed to perform the action (e.g., {"employeeName": "Naman", "status": "Absent"})
+    "actionType": "GET_REVENUE" | "MARK_ATTENDANCE" | "CREATE_ORDER" | "GET_LOW_STOCK" | "ADD_PRODUCT" | null,
+    "payload": {} // Any extracted data needed to perform the action (e.g., {"productName": "Shirt", "quantity": 10, "price": 500})
   },
   "navigationTarget": "/dashboard" | "/inventory" | "/orders" | "/finance" | "/employees" | null,
   "spokenResponse": "The exact Hinglish phrase to speak back to the user. (Keep empty if internal action is required)",
@@ -46,13 +46,19 @@ exports.processVoiceCommand = async (req, res) => {
   try {
     if (!ai) return res.status(500).json({ message: "AI Assistant is not configured. Missing API Key." });
 
-    const { text } = req.body;
+    const { text, history } = req.body;
     if (!text) return res.status(400).json({ message: "No text provided" });
+
+    // Format history for context
+    let promptContext = text;
+    if (history && history.length > 0) {
+        promptContext = history.map(h => `${h.role}: ${h.content}`).join('\n');
+    }
 
     // Step 1: Get Initial Intent from LLM
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: text,
+      contents: promptContext,
       config: {
         systemInstruction: SYSTEM_PROMPT,
         responseMimeType: "application/json",
@@ -86,19 +92,27 @@ exports.processVoiceCommand = async (req, res) => {
             aiResult.navigationTarget = '/inventory';
         }
         else if (actionType === 'MARK_ATTENDANCE' && payload.employeeName && payload.status) {
-            // Find employee
             const emp = await Employee.findOne({ name: { $regex: new RegExp(payload.employeeName, 'i') } });
             if (emp) {
-                await Attendance.create({
-                    employee: emp._id,
-                    status: payload.status,
-                    date: new Date()
-                });
+                await Attendance.create({ employee: emp._id, status: payload.status, date: new Date() });
                 internalData = `Attendance marked ${payload.status} for ${emp.name}`;
                 aiResult.refreshRequired = true;
             } else {
                 internalData = `Employee ${payload.employeeName} not found in database.`;
             }
+        }
+        else if (actionType === 'ADD_PRODUCT' && payload.productName && payload.price && payload.quantity !== undefined) {
+            // Add product logic
+            await Product.create({
+                name: payload.productName,
+                price: payload.price,
+                quantity: payload.quantity,
+                stockStatus: payload.quantity > 5 ? 'In Stock' : 'Low Stock',
+                unit: payload.unit || 'pcs'
+            });
+            internalData = `Successfully added ${payload.quantity} ${payload.productName} at price ${payload.price}.`;
+            aiResult.refreshRequired = true;
+            aiResult.navigationTarget = '/inventory';
         }
 
         // Step 3: If we performed an action, ask LLM to generate the final spoken response based on real data
