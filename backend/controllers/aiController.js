@@ -32,8 +32,8 @@ You must respond with the following strict JSON structure:
 {
   "intent": "FETCH_DATA" | "MUTATE_DATA" | "NAVIGATE" | "ASK_CLARIFICATION",
   "internalAction": {
-    "actionType": "GET_REVENUE" | "MARK_ATTENDANCE" | "CREATE_ORDER" | "GET_LOW_STOCK" | "ADD_PRODUCT" | null,
-    "payload": {} // Any extracted data needed to perform the action (e.g., {"productName": "Shirt", "quantity": 10, "price": 500})
+    "actionType": "GET_REVENUE" | "MARK_ATTENDANCE" | "CREATE_ORDER" | "GET_ORDERS" | "GET_LOW_STOCK" | "ADD_PRODUCT" | "ADD_EMPLOYEE" | "GET_EMPLOYEES" | null,
+    "payload": {} // Any extracted data needed to perform the action (e.g., {"employeeName": "Naman", "status": "Absent", "salary": 50000})
   },
   "navigationTarget": "/dashboard" | "/inventory" | "/orders" | "/finance" | "/employees" | null,
   "spokenResponse": "The exact Hinglish phrase to speak back to the user. (Keep empty if internal action is required)",
@@ -91,14 +91,63 @@ exports.processVoiceCommand = async (req, res) => {
             internalData = `There are ${lowStock.length} items low on stock.`;
             aiResult.navigationTarget = '/inventory';
         }
+        else if (actionType === 'GET_ORDERS') {
+            const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+            const orders = await Order.find({ shop: req.user.id, createdAt: { $gte: startOfDay } });
+            internalData = `Aaj total ${orders.length} orders aaye hain.`;
+            aiResult.navigationTarget = '/orders';
+        }
+        else if (actionType === 'GET_EMPLOYEES') {
+            const employees = await Employee.find({ shop: req.user.id });
+            const absentCount = await Attendance.countDocuments({ date: { $gte: new Date().setHours(0,0,0,0) }, status: 'Absent' });
+            internalData = `You have ${employees.length} employees. ${absentCount} are absent today.`;
+            aiResult.navigationTarget = '/employees';
+        }
         else if (actionType === 'MARK_ATTENDANCE' && payload.employeeName && payload.status) {
-            const emp = await Employee.findOne({ name: { $regex: new RegExp(payload.employeeName, 'i') } });
+            const emp = await Employee.findOne({ shop: req.user.id, name: { $regex: new RegExp(payload.employeeName, 'i') } });
             if (emp) {
                 await Attendance.create({ employee: emp._id, status: payload.status, date: new Date() });
                 internalData = `Attendance marked ${payload.status} for ${emp.name}`;
                 aiResult.refreshRequired = true;
             } else {
                 internalData = `Employee ${payload.employeeName} not found in database.`;
+            }
+        }
+        else if (actionType === 'ADD_EMPLOYEE' && payload.employeeName) {
+            await Employee.create({
+                shop: req.user.id,
+                name: payload.employeeName,
+                salary: payload.salary || 0
+            });
+            internalData = `Successfully added new employee named ${payload.employeeName}.`;
+            aiResult.refreshRequired = true;
+            aiResult.navigationTarget = '/employees';
+        }
+        else if (actionType === 'CREATE_ORDER' && payload.productName && payload.quantity) {
+            const product = await Product.findOne({ shop: req.user.id, name: { $regex: new RegExp(payload.productName, 'i') } });
+            if (!product) {
+                internalData = `Product ${payload.productName} inventory me nahi mila.`;
+            } else {
+                const subtotal = product.sellingPrice * payload.quantity;
+                await Order.create({
+                    shop: req.user.id,
+                    customer: { name: payload.customerName || 'Walk-in' },
+                    items: [{
+                        product: product._id,
+                        productName: product.name,
+                        unitPrice: product.sellingPrice,
+                        costPrice: product.costPrice,
+                        quantity: payload.quantity,
+                        subtotal: subtotal
+                    }],
+                    totalAmount: subtotal,
+                    finalAmount: subtotal
+                });
+                product.quantity = Math.max(0, product.quantity - payload.quantity);
+                await product.save();
+                internalData = `Order ban gaya for ${payload.quantity} ${product.name}. Total amount ₹${subtotal}.`;
+                aiResult.refreshRequired = true;
+                aiResult.navigationTarget = '/orders';
             }
         }
         else if (actionType === 'ADD_PRODUCT' && payload.productName && payload.price && payload.quantity !== undefined) {
