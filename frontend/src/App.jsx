@@ -1,6 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { VoiceProvider } from './context/VoiceContext';
+import VoiceAssistant from './components/VoiceAssistant';
+
 import Login    from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
@@ -38,15 +41,18 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            style: { background: '#0d1226', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, fontSize: 13 },
-            success: { iconTheme: { primary: '#10b981', secondary: '#0d1226' } },
-            error:   { iconTheme: { primary: '#f43f5e', secondary: '#0d1226' } },
-          }}
-        />
-        <AppRoutes />
+        <VoiceProvider>
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              style: { background: '#0d1226', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, fontSize: 13 },
+              success: { iconTheme: { primary: '#10b981', secondary: '#0d1226' } },
+              error:   { iconTheme: { primary: '#f43f5e', secondary: '#0d1226' } },
+            }}
+          />
+          <VoiceAssistant />
+          <AppRoutes />
+        </VoiceProvider>
       </AuthProvider>
     </BrowserRouter>
   );

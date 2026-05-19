@@ -59,6 +59,7 @@ app.use('/api/v1/products',  require('./routes/productRoutes'));
 app.use('/api/v1/orders',    require('./routes/orderRoutes'));
 app.use('/api/v1/sales',     require('./routes/salesRoutes'));
 app.use('/api/v1/employees', require('./routes/employeeRoutes'));
+app.use('/api/v1/ai',        require('./routes/aiRoutes'));
 
 // ─── Health Check ──────────────────────────────────────────────────────────────
 app.get('/api/v1/health', (req, res) => {
