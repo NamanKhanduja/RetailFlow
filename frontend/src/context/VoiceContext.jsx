@@ -93,10 +93,17 @@ export const VoiceProvider = ({ children }) => {
     };
 
     recognition.onerror = (event) => {
-      console.error("Speech recognition error", event.error);
+      console.error("Speech recognition error:", event.error);
       setIsListening(false);
-      if (event.error !== 'no-speech') {
-        toast.error("Microphone error. Please check permissions.");
+      
+      if (event.error === 'not-allowed') {
+        toast.error("Microphone access denied. Please allow permissions in your browser URL bar.", { duration: 5000 });
+      } else if (event.error === 'no-speech') {
+        // Just quietly stop if no speech detected
+      } else if (event.error === 'network') {
+        toast.error("Network error. Voice recognition requires an internet connection.");
+      } else {
+        toast.error(`Microphone error: ${event.error}`);
       }
     };
 
