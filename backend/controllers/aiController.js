@@ -61,7 +61,9 @@ exports.processVoiceCommand = async (req, res) => {
 
     let aiResult;
     try {
-      aiResult = JSON.parse(response.text());
+      let rawText = response.text;
+      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      aiResult = JSON.parse(rawText);
     } catch (e) {
       return res.status(500).json({ message: "Failed to parse AI response", error: e.message });
     }
@@ -105,7 +107,7 @@ exports.processVoiceCommand = async (req, res) => {
                 model: 'gemini-2.5-flash',
                 contents: `Original Request: "${text}". \nSystem Result: "${internalData}". \n\nGenerate ONLY a natural Hinglish spoken response representing this system result.`
             });
-            aiResult.spokenResponse = followUpResponse.text().trim();
+            aiResult.spokenResponse = followUpResponse.text.trim();
         }
     }
 
