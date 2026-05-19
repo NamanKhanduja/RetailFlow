@@ -102,12 +102,13 @@ exports.processVoiceCommand = async (req, res) => {
             }
         }
         else if (actionType === 'ADD_PRODUCT' && payload.productName && payload.price && payload.quantity !== undefined) {
-            // Add product logic
+            // Add product logic (satisfying ProductSchema)
             await Product.create({
+                shop: req.user.id, // Auth middleware must provide req.user
                 name: payload.productName,
-                price: payload.price,
+                costPrice: payload.price,       // Assuming spoken price is both for simplicity or cost
+                sellingPrice: payload.price,    // Same here unless LLM splits them
                 quantity: payload.quantity,
-                stockStatus: payload.quantity > 5 ? 'In Stock' : 'Low Stock',
                 unit: payload.unit || 'pcs'
             });
             internalData = `Successfully added ${payload.quantity} ${payload.productName} at price ${payload.price}.`;
@@ -117,11 +118,16 @@ exports.processVoiceCommand = async (req, res) => {
 
         // Step 3: If we performed an action, ask LLM to generate the final spoken response based on real data
         if (internalData) {
-            const followUpResponse = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: `Original Request: "${text}". \nSystem Result: "${internalData}". \n\nGenerate ONLY a natural Hinglish spoken response representing this system result.`
-            });
-            aiResult.spokenResponse = followUpResponse.text.trim();
+            try {
+                const followUpResponse = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: `Original Request: "${text}". \nSystem Result: "${internalData}". \n\nGenerate ONLY a natural Hinglish spoken response representing this system result.`
+                });
+                aiResult.spokenResponse = followUpResponse.text.trim();
+            } catch (err) {
+                console.error("Follow-up AI failed:", err.message);
+                aiResult.spokenResponse = "Action successful, but I'm currently experiencing high network demand.";
+            }
         }
     }
 
@@ -130,6 +136,9 @@ exports.processVoiceCommand = async (req, res) => {
 
   } catch (error) {
     console.error('AI Processing Error:', error);
-    res.status(500).json({ message: "Internal server error", error: error.message });
+    const msg = error?.status === 503 || error?.message?.includes('503') 
+        ? "AI provider is currently overloaded (503). Please try again in a moment."
+        : "Internal server error";
+    res.status(500).json({ message: msg, error: error.message });
   }
 };
