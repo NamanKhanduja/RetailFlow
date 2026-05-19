@@ -14,16 +14,17 @@ export const VoiceProvider = ({ children }) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   
-  // Initialize Speech Recognition
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const recognition = SpeechRecognition ? new SpeechRecognition() : null;
-
-  if (recognition) {
-    recognition.continuous = false;
-    // Set to Hindi (India) to understand Hinglish better
-    recognition.lang = 'hi-IN';
-    recognition.interimResults = false;
-  }
+  // Initialize Speech Recognition ONCE
+  const [recognition] = useState(() => {
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) return null;
+    
+    const rec = new SpeechRecognitionAPI();
+    rec.continuous = false;
+    rec.lang = 'hi-IN'; // Speak in Hindi/Hinglish
+    rec.interimResults = false;
+    return rec;
+  });
 
   const speak = (text, onEndCallback) => {
     if (!window.speechSynthesis) return;
