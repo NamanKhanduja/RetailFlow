@@ -32,7 +32,7 @@ You must respond with the following strict JSON structure:
 {
   "intent": "FETCH_DATA" | "MUTATE_DATA" | "NAVIGATE" | "ASK_CLARIFICATION",
   "internalAction": {
-    "actionType": "GET_REVENUE" | "MARK_ATTENDANCE" | "CREATE_ORDER" | "GET_ORDERS" | "GET_LOW_STOCK" | "ADD_PRODUCT" | "ADD_EMPLOYEE" | "GET_EMPLOYEES" | null,
+    "actionType": "GET_REVENUE" | "MARK_ATTENDANCE" | "CREATE_ORDER" | "GET_ORDERS" | "GET_LOW_STOCK" | "GET_PRODUCT_STOCK" | "ADD_PRODUCT" | "ADD_EMPLOYEE" | "GET_EMPLOYEES" | null,
     "payload": {} // Any extracted data needed to perform the action (e.g., {"employeeName": "Naman", "status": "Absent", "salary": 50000})
   },
   "navigationTarget": "/dashboard" | "/inventory" | "/orders" | "/finance" | "/employees" | null,
@@ -89,6 +89,15 @@ exports.processVoiceCommand = async (req, res) => {
         else if (actionType === 'GET_LOW_STOCK') {
             const lowStock = await Product.find({ quantity: { $lte: 5 }});
             internalData = `There are ${lowStock.length} items low on stock.`;
+            aiResult.navigationTarget = '/inventory';
+        }
+        else if (actionType === 'GET_PRODUCT_STOCK' && payload.productName) {
+            const product = await Product.findOne({ shop: req.user.id, name: { $regex: new RegExp(payload.productName, 'i') } });
+            if (product) {
+                internalData = `${product.name} ka inventory me ${product.quantity} ${product.unit || 'pcs'} stock bacha hai.`;
+            } else {
+                internalData = `${payload.productName} inventory me nahi mila.`;
+            }
             aiResult.navigationTarget = '/inventory';
         }
         else if (actionType === 'GET_ORDERS') {
