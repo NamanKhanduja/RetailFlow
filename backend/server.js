@@ -41,10 +41,10 @@ if (process.env.NODE_ENV === 'development') {
 // Parse incoming JSON bodies
 app.use(express.json());
 
-// Global rate limiter — 100 requests per 10 minutes per IP
+// Rate limiter — relaxed in dev so dashboard polling never blocks the AI endpoint
 const limiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 100,
+  max: process.env.NODE_ENV === 'production' ? 200 : 2000,
   message: { success: false, message: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -59,6 +59,7 @@ app.use('/api/v1/products',  require('./routes/productRoutes'));
 app.use('/api/v1/orders',    require('./routes/orderRoutes'));
 app.use('/api/v1/sales',     require('./routes/salesRoutes'));
 app.use('/api/v1/employees', require('./routes/employeeRoutes'));
+app.use('/api/v1/ai',        require('./routes/aiRoutes'));
 
 // ─── Health Check ──────────────────────────────────────────────────────────────
 app.get('/api/v1/health', (req, res) => {
