@@ -22,3 +22,11 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Dev-only scripts (contain demo credentials / local test data — never commit)
+seed.js
+test.js
+testAI.js
+verifyAll.js
+listModels.js
+fixindex.js
