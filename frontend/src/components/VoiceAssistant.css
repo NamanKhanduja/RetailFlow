@@ -127,3 +127,90 @@
   0% { width: 60px; height: 60px; opacity: 1; }
   100% { width: 140px; height: 140px; opacity: 0; }
 }
+
+/* Keyboard Fallback UI Styles */
+.voice-keyboard-input-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.voice-keyboard-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #f8fafc;
+  font-size: 13px;
+  outline: none;
+  font-family: 'Outfit', sans-serif;
+  transition: all 0.3s ease;
+}
+
+.voice-keyboard-input:focus {
+  border-color: rgba(139, 92, 246, 0.6);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.15);
+}
+
+.voice-keyboard-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.voice-keyboard-send {
+  background: linear-gradient(135deg, #4f46e5, #8b5cf6);
+  border: none;
+  color: white;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+.voice-keyboard-send:hover:not(:disabled) {
+  transform: scale(1.08);
+  box-shadow: 0 6px 16px rgba(139, 92, 246, 0.5);
+}
+
+.voice-keyboard-send:disabled {
+  background: #334155;
+  color: #64748b;
+  cursor: not-allowed;
+  transform: scale(1);
+  box-shadow: none;
+}
+
+.status-text.manual {
+  color: #c084fc;
+}
+
+.voice-keyboard-fab:hover:not(:disabled) {
+  transform: scale(1.1);
+  border-color: rgba(139, 92, 246, 0.8) !important;
+  color: #fff !important;
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.4) !important;
+}
+
+.voice-keyboard-fab.active {
+  background: linear-gradient(135deg, #4f46e5, #8b5cf6) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.5) !important;
+}
+
+.voice-lang-toggle-btn:hover {
+  background: rgba(139, 92, 246, 0.25) !important;
+  border-color: rgba(139, 92, 246, 0.6) !important;
+  color: white !important;
+  transform: translateY(-1px);
+}
