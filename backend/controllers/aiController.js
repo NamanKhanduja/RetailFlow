@@ -1,202 +1,640 @@
-const { GoogleGenAI } = require('@google/genai');
-const Product = require('../models/Product');
-const Order = require('../models/Order');
-const Sale = require('../models/Sale');
-const Employee = require('../models/Employee');
-const Attendance = require('../models/Attendance');
+/**
+ * aiController.js  —  RetailFlow AI Agent v2
+ * ───────────────────────────────────────────
+ * Three-layer intelligence system:
+ *
+ *  1. VOICE INTENT CLASSIFICATION
+ *     Maps Hindi / English / Hinglish commands to typed intents.
+ *
+ *  2. DEMAND PREDICTION
+ *     Pre-fetches sales-velocity data from the DB and injects it into the
+ *     system prompt so the LLM can answer restock questions with real numbers.
+ *
+ *  3. PRODUCT PAIRING RECOMMENDATIONS
+ *     Pre-fetches co-purchase patterns and injects them so the LLM (or the
+ *     DB-side executor) can suggest companion products automatically.
+ */
 
-// Ensure GEMINI_API_KEY is available in .env
+const { GoogleGenAI }          = require('@google/genai');
+const Product                  = require('../models/Product');
+const Order                    = require('../models/Order');
+const Sale                     = require('../models/Sale');
+const Employee                 = require('../models/Employee');
+const Attendance               = require('../models/Attendance');
+const { getLowStockPredictions } = require('../utils/demandPredictor');
+const { getPairingRules }      = require('../utils/pairingEngine');
+
+// ── Initialise Gemini client once at server start ────────────────────────────
 let ai = null;
 try {
   ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 } catch (e) {
-  console.warn("Google Gen AI client not initialized (check API key).");
+  console.warn('[RetailFlow AI] Gemini client not initialised — check GEMINI_API_KEY.');
 }
 
-const SYSTEM_PROMPT = `
-You are 'RetailFlow AI', the intelligent co-pilot for a Shop Management application. 
-Your user will speak to you in Hindi, English, or Hinglish. Your personality is highly efficient, helpful, and concise.
+// ─────────────────────────────────────────────────────────────────────────────
+// PERFORMANCE CACHE — Store heavy database aggregations in memory (5 min cache)
+// ─────────────────────────────────────────────────────────────────────────────
+const cache = {
+  lowStock: { data: null, timestamp: 0 },
+  pairingRules: { data: null, timestamp: 0 },
+};
+const CACHE_DURATION_MS = 5 * 60 * 1000;
 
-Your goal is to map the user's spoken command to the exact actions required by the application.
-You must ONLY output a valid JSON object. No markdown formatting, no conversational filler, no code blocks.
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper to determine a realistic default grocery price if missing
+function getFallbackPrice(name) {
+  const lower = name.toLowerCase();
+  if (lower.includes('butter')) return { price: 60, cost: 42 };
+  if (lower.includes('bread')) return { price: 42, cost: 29.4 };
+  if (lower.includes('soda')) return { price: 20, cost: 14 };
+  if (lower.includes('milk')) return { price: 30, cost: 21 };
+  if (lower.includes('egg')) return { price: 6, cost: 4.2 };
+  if (lower.includes('rice')) return { price: 50, cost: 35 };
+  if (lower.includes('biscuit')) return { price: 10, cost: 7 };
+  if (lower.includes('cheese')) return { price: 120, cost: 84 };
+  if (lower.includes('sugar')) return { price: 45, cost: 31.5 };
+  if (lower.includes('tea')) return { price: 80, cost: 56 };
+  return { price: 50, cost: 35 }; // general fallback
+}
 
-### CONTEXT & SCHEMA
-You have access to the following modules:
-1. Inventory: Products have name, quantity, price, stockStatus.
-2. Orders: Orders require customer details, product items, and totalAmount.
-3. HR: Employees have attendance (Present, Absent, Half-Day).
-4. Finance: Tracks daily/monthly revenue and profit.
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP A — Build a dynamic, data-enriched system prompt
+// ─────────────────────────────────────────────────────────────────────────────
+function buildSystemPrompt(allProducts, lowStockList, pairingRules, dailySales) {
+  // Serialise ALL products and prices in the inventory for dynamic lookup!
+  const productContext = allProducts.length > 0
+    ? allProducts.map(p => `${p.name} (price: ₹${p.sellingPrice} per ${p.unit})`).join('; ')
+    : 'No products in inventory.';
 
-### JSON OUTPUT FORMAT
-You must respond with the following strict JSON structure:
+  const lowStockSummary = lowStockList.length > 0
+    ? lowStockList.map(i => `${i.name} (stock: ${i.currentStock} ${i.unit})`).join('; ')
+    : 'No critical stock alerts right now.';
+
+  const statsContext = dailySales
+    ? `Revenue: ₹${dailySales.revenue}, Profit: ₹${dailySales.profit}, Orders: ${dailySales.orderCount}`
+    : 'No stats yet.';
+
+  return `
+Role: You are the RetailFlow Autonomous Agent. You are NOT a chatbot. You are a high-speed data-processing API router.
+
+CONVERSATIONAL STEP-BY-STEP FLOWS (CRITICAL):
+
+1. INTENT: PLACE_ORDER (Placing an Order)
+   You MUST gather these details step-by-step from the user before placing the order:
+   - Step 1: Customer Name (e.g. "Aapka naam kya hai?")
+   - Step 2: Contact Number / Phone (e.g. "Aapka mobile number kya hai?")
+   - Step 3: Order Details (Which products and their quantities)
+   
+   If any of these details are missing, ask for them politely ONE BY ONE. DO NOT ask for everything at once. Keep questions extremely short and friendly.
+   If the user already specified some fields in their input, skip those questions and ask for the remaining ones.
+   
+   Once you have gathered Customer Name, Contact Number, and Order Details:
+   - Look up the prices of the products in the DATABASE CONTEXT.
+   - Calculate the totalAmount (sellingPrice * quantity for each item).
+   - Output "status": "pending".
+   - Ask for confirmation in Hinglish: "Aapka order total ₹[Amount] hua. Is this your final order to place?"
+   
+   Once the user confirms (says "yes", "haan", "ok", "place kar do", "final"):
+   - Set "intent": "PLACE_ORDER" and "status": "success".
+   - Output all gathered customer details, totalAmount, and items (with productName, quantity, and looked-up price) in the data payload.
+
+2. INTENT: ADD_PRODUCT (Adding a New Item to Inventory)
+   You MUST gather these details step-by-step from the user before adding the product:
+   - Step 1: Product Name (e.g. "Product ka naam kya hai?")
+   - Step 2: Stock Quantity (e.g. "Kitni quantity add karni hai?")
+   - Step 3: Selling Price (e.g. "Selling price kya hoga?")
+   - Step 4: Cost Price (e.g. "Cost price kya hoga?")
+   
+   If any of these details are missing, ask for them politely ONE BY ONE. DO NOT ask for everything at once.
+   If the user already specified some fields, skip those and ask for the rest.
+   
+   Once you have gathered all 4 fields:
+   - Output "status": "pending".
+   - Ask for confirmation in Hinglish: "[Qty] [Product] ₹[Selling Price] selling price aur ₹[Cost Price] cost price par add kar doon?"
+   
+   Once the user confirms (says "yes", "haan", "ok"):
+   - Set "intent": "ADD_PRODUCT" and "status": "success".
+   - Output the product details in the data payload (items array with productName, quantity, price as selling price, and costPrice).
+
+OUTPUT SCHEMA (STRICT JSON — output ONLY this valid JSON block, no markdown formatting, no code fences):
 {
-  "intent": "FETCH_DATA" | "MUTATE_DATA" | "NAVIGATE" | "ASK_CLARIFICATION",
-  "internalAction": {
-    "actionType": "GET_REVENUE" | "MARK_ATTENDANCE" | "CREATE_ORDER" | "GET_ORDERS" | "GET_LOW_STOCK" | "GET_PRODUCT_STOCK" | "ADD_PRODUCT" | "ADD_EMPLOYEE" | "GET_EMPLOYEES" | null,
-    "payload": {} // Any extracted data needed to perform the action (e.g., {"employeeName": "Naman", "status": "Absent", "salary": 50000})
+  "intent": "ADD_PRODUCT | PLACE_ORDER | MARK_ATTENDANCE | FETCH_ANALYTICS | ERROR",
+  "data": { 
+    "items": [
+      {
+        "productName": "string",
+        "quantity": (number),
+        "price": (number or null),
+        "costPrice": (number or null),
+        "unit": "string"
+      }
+    ],
+    "totalAmount": (number or null), 
+    "customerName": "string or null",
+    "customerPhone": "string or null",
+    "status": "success | pending",
+    "employeeName": "string or null",
+    "attendanceStatus": "Present | Absent | Half-Day | null",
+    "analyticsType": "revenue | profit | orders | employees | null"
   },
-  "navigationTarget": "/dashboard" | "/inventory" | "/orders" | "/finance" | "/employees" | null,
-  "spokenResponse": "The exact Hinglish phrase to speak back to the user. (Keep empty if internal action is required)",
-  "requiresFollowUp": boolean,
-  "refreshRequired": boolean
+  "spokenResponse": "Short status question or confirmation message (matching input language, < 15 words)"
 }
-`;
 
-exports.processVoiceCommand = async (req, res) => {
-  try {
-    if (!ai) return res.status(500).json({ message: "AI Assistant is not configured. Missing API Key." });
+DATABASE CONTEXT:
+- Current Products & Prices: ${productContext}
+- Low Stock Alerts: ${lowStockSummary}
+- Current Stats: ${statsContext}
+`.trim();
+}
 
-    const { text, history } = req.body;
-    if (!text) return res.status(400).json({ message: "No text provided" });
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP B — Pre-fetch all context data in parallel (High-speed Cached)
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchContextData(shopId) {
+  const now = Date.now();
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
 
-    // Format history for context
-    let promptContext = text;
-    if (history && history.length > 0) {
-        promptContext = history.map(h => `${h.role}: ${h.content}`).join('\n');
+  // Check and reuse lowStock cache
+  let lowStockPromise;
+  if (cache.lowStock.data && (now - cache.lowStock.timestamp < CACHE_DURATION_MS)) {
+    lowStockPromise = Promise.resolve(cache.lowStock.data);
+  } else {
+    lowStockPromise = getLowStockPredictions(shopId).then(data => {
+      cache.lowStock.data = data;
+      cache.lowStock.timestamp = Date.now();
+      return data;
+    }).catch(() => []);
+  }
+
+  // Check and reuse pairingRules cache
+  let pairingPromise;
+  if (cache.pairingRules.data && (now - cache.pairingRules.timestamp < CACHE_DURATION_MS)) {
+    pairingPromise = Promise.resolve(cache.pairingRules.data);
+  } else {
+    pairingPromise = getPairingRules(shopId).then(data => {
+      cache.pairingRules.data = data;
+      cache.pairingRules.timestamp = Date.now();
+      return data;
+    }).catch(() => ({}));
+  }
+
+  // Run fast Mongoose queries in parallel with cached promises
+  const [lowList, pairRules, orders, sales, products] = await Promise.all([
+    lowStockPromise,
+    pairingPromise,
+    Order.find({ shop: shopId, createdAt: { $gte: todayStart } }).select('finalAmount').lean(),
+    Sale.find({ shop: shopId, date: { $gte: todayStart } }).select('revenue profit').lean(),
+    Product.find({ shop: shopId }).select('name sellingPrice unit').lean(),
+  ]);
+
+  const orderRevenue = orders.reduce((s, o) => s + (o.finalAmount || 0), 0);
+  const saleRevenue  = sales.reduce((s, x) => s + (x.revenue   || 0), 0);
+  const saleProfit   = sales.reduce((s, x) => s + (x.profit    || 0), 0);
+  
+  const dailySales = {
+    revenue:    orderRevenue + saleRevenue,
+    profit:     saleProfit,
+    orderCount: orders.length,
+  };
+
+  return { lowStockList: lowList, pairingRules: pairRules, dailySales, allProducts: products };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP C — Execute DB action based on classified intent
+// ─────────────────────────────────────────────────────────────────────────────
+async function executeAction(intent, payload, shopId, pairingRules, aiResult) {
+  // If the flow is pending user confirmation, do NOT execute database changes!
+  if (payload.status === 'pending') {
+    return { internalData: null, navigationTarget: null, refreshRequired: false, recommendation: null };
+  }
+
+  let internalData     = null;   // String sent to Gemini for spoken-response fallback
+  let navigationTarget = null;
+  let refreshRequired  = false;
+  let recommendation   = null;   // DB-computed pairing wins over LLM suggestion
+
+  switch (intent) {
+
+    // ── ADD_PRODUCT ─────────────────────────────────────────────────────────
+    case 'ADD_PRODUCT': {
+      // Build normalized items array supporting both single product payload and list format
+      let itemsList = payload.items || [];
+      if (itemsList.length === 0 && payload.productName) {
+        itemsList.push({
+          productName: payload.productName,
+          quantity: payload.quantity ?? 1,
+          price: payload.price || payload.sellingPrice,
+          costPrice: payload.costPrice,
+          unit: payload.unit || 'pcs'
+        });
+      }
+
+      if (itemsList.length === 0) {
+        internalData = 'Product details missing.';
+        if (aiResult) aiResult.spokenResponse = 'Product details missing.';
+        break;
+      }
+
+      const addedSummary = [];
+      let lastProductName = '';
+
+      for (const item of itemsList) {
+        if (!item.productName) continue;
+        lastProductName = item.productName;
+        const qty = Number(item.quantity ?? 1);
+
+        // Check if product already exists (case-insensitive) to prevent duplicate inventory rows!
+        let dbProd = await Product.findOne({
+          shop: shopId,
+          name: { $regex: new RegExp(`^${item.productName.trim()}$`, 'i') }
+        });
+
+        if (dbProd) {
+          // Increment existing product quantity instead of creating a duplicate row!
+          dbProd.quantity += qty;
+          if (item.price && item.price > 0) {
+            dbProd.sellingPrice = item.price;
+            dbProd.costPrice = item.costPrice || (item.price * 0.7);
+          }
+          await dbProd.save();
+          addedSummary.push(`${qty} ${dbProd.name}`);
+        } else {
+          // Determine non-zero price and cost using intelligent fallback heuristics
+          let price = Number(item.price || 0);
+          let cost = Number(item.costPrice || price * 0.7);
+          if (price <= 0) {
+            const fallback = getFallbackPrice(item.productName);
+            price = fallback.price;
+            cost = fallback.cost;
+          }
+          const generatedSku = 'VOICE-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+          await Product.create({
+            shop:         shopId,
+            name:         item.productName,
+            sku:          generatedSku,
+            costPrice:    cost,
+            sellingPrice: price,
+            quantity:     qty,
+            unit:         item.unit || 'pcs',
+          });
+          addedSummary.push(`${qty} ${item.productName}`);
+        }
+      }
+
+      internalData = `Added: ${addedSummary.join(', ')}.`;
+      refreshRequired  = true;
+      navigationTarget = '/inventory';
+
+      // ── Pairing recommendation (DB-computed, most reliable) ──────────────
+      if (lastProductName) {
+        const matchedKey = Object.keys(pairingRules).find(
+          (k) => k.toLowerCase() === lastProductName.toLowerCase()
+        );
+        if (matchedKey && pairingRules[matchedKey]?.length > 0) {
+          const top = pairingRules[matchedKey][0];
+          recommendation = `Sir, iske saath ${top.pairedWith} bhi bikta hai.`;
+        }
+      }
+      break;
     }
 
-    // Step 1: Get Initial Intent from LLM
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    // ── PLACE_ORDER ─────────────────────────────────────────────────────────
+    case 'PLACE_ORDER': {
+      // Build normalized items array
+      let itemsList = payload.items || [];
+      if (itemsList.length === 0 && payload.productName) {
+        itemsList.push({
+          productName: payload.productName,
+          quantity: payload.quantity ?? 1,
+          price: payload.price || payload.sellingPrice,
+          unit: payload.unit || 'pcs'
+        });
+      }
+
+      if (itemsList.length === 0) {
+        internalData = 'Order details missing.';
+        if (aiResult) aiResult.spokenResponse = 'Order details missing.';
+        break;
+      }
+
+      let totalAmount = 0;
+      let totalCOGS   = 0;
+      const orderItems = [];
+      const orderSummary = [];
+
+      for (const item of itemsList) {
+        if (!item.productName) continue;
+
+        let dbProd = await Product.findOne({
+          shop: shopId,
+          name: { $regex: new RegExp(`^${item.productName.trim()}$`, 'i') }
+        });
+
+        const qty = Number(item.quantity || 1);
+
+        if (!dbProd) {
+          // AUTO-CREATION IN INVENTORY: Missing products are automatically created first!
+          let price = Number(item.price || 0);
+          let cost = price * 0.7;
+          if (price <= 0) {
+            const fallback = getFallbackPrice(item.productName);
+            price = fallback.price;
+            cost = fallback.cost;
+          }
+          const generatedSku = 'VOICE-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+          // Initialize with a default sufficient stock to satisfy the current order deduction
+          dbProd = await Product.create({
+            shop:         shopId,
+            name:         item.productName,
+            sku:          generatedSku,
+            costPrice:    cost,
+            sellingPrice: price,
+            quantity:     qty + 10,
+            unit:         item.unit || 'pcs',
+          });
+        }
+
+        // Deduct inventory stock
+        if (dbProd.quantity < qty) {
+          dbProd.quantity = 0;
+        } else {
+          dbProd.quantity -= qty;
+        }
+        await dbProd.save();
+
+        const subtotal = dbProd.sellingPrice * qty;
+        totalAmount += subtotal;
+        totalCOGS   += dbProd.costPrice * qty;
+
+        orderItems.push({
+          product:     dbProd._id,
+          productName: dbProd.name,
+          sku:         dbProd.sku,
+          unitPrice:   dbProd.sellingPrice,
+          costPrice:   dbProd.costPrice,
+          quantity:    qty,
+          subtotal
+        });
+
+        orderSummary.push(`${qty} ${dbProd.name}`);
+      }
+
+      // Create a completed Mongoose Order document
+      const today = new Date();
+      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+      const orderCount = await Order.countDocuments({ shop: shopId });
+      const orderNumber = `ORD-${dateStr}-${String(orderCount + 1).padStart(3, '0')}`;
+
+      const newOrder = await Order.create({
+        shop: shopId,
+        orderNumber,
+        customer: { 
+          name: payload.customerName || 'Walk-in Customer',
+          phone: payload.customerPhone || undefined
+        },
+        items: orderItems,
+        totalAmount,
+        finalAmount: totalAmount,
+        status: 'Completed'
+      });
+
+      // Create a Sale record
+      await Sale.create({
+        shop:            shopId,
+        order:           newOrder._id,
+        revenue:         totalAmount,
+        costOfGoodsSold: totalCOGS,
+        date:            new Date(),
+        notes:           `Voice Assistant Order: ${orderSummary.join(', ')}`,
+      });
+      
+      internalData = `Order logged. Total ₹${totalAmount}.`;
+      // Override provisional spokenResponse with precise computed total for safety
+      if (aiResult) {
+        const lang = (aiResult.spokenResponse || '').match(/[\u0900-\u097F]/) ? 'hi' : 'en';
+        aiResult.spokenResponse = lang === 'hi' 
+          ? `Order logged. Total ₹${totalAmount}.`
+          : `Order logged. Total ₹${totalAmount}.`;
+      }
+      refreshRequired  = true;
+      navigationTarget = '/orders';
+      break;
+    }
+
+    // ── MARK_ATTENDANCE ─────────────────────────────────────────────────────
+    case 'MARK_ATTENDANCE': {
+      if (!payload.employeeName || !payload.attendanceStatus) {
+        internalData = 'Employee attendance details missing.';
+        if (aiResult) aiResult.spokenResponse = 'Attendance details missing.';
+        break;
+      }
+      const emp = await Employee.findOne({
+        shop:     shopId,
+        name:     { $regex: new RegExp(payload.employeeName.trim(), 'i') },
+        isActive: true,
+      });
+      if (!emp) {
+        internalData = 'Employee not found.';
+        if (aiResult) aiResult.spokenResponse = 'Employee not found.';
+      } else {
+        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+        await Attendance.findOneAndUpdate(
+          { shop: shopId, employee: emp._id, date: { $gte: todayStart } },
+          { shop: shopId, employee: emp._id, status: payload.attendanceStatus, date: new Date() },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        internalData = 'Attendance marked successfully.';
+        refreshRequired  = true;
+        navigationTarget = '/employees';
+      }
+      break;
+    }
+
+    // ── FETCH_ANALYTICS ─────────────────────────────────────────────────────
+    case 'FETCH_ANALYTICS': {
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+      const type = payload.analyticsType || 'revenue';
+
+      if (type === 'revenue' || type === 'profit') {
+        const [monthlySales, todaySales] = await Promise.all([
+          Sale.find({ shop: shopId, date: { $gte: monthStart } }).lean(),
+          Sale.find({ shop: shopId, date: { $gte: todayStart } }).lean(),
+        ]);
+        const monthRev    = monthlySales.reduce((s, x) => s + (x.revenue || 0), 0);
+        const monthProfit = monthlySales.reduce((s, x) => s + (x.profit  || 0), 0);
+        internalData = `Month revenue: ₹${monthRev.toLocaleString('en-IN')}, profit: ₹${monthProfit.toLocaleString('en-IN')}.`;
+        navigationTarget = '/finance';
+      } else if (type === 'orders') {
+        const orders = await Order.find({ shop: shopId, createdAt: { $gte: todayStart } }).lean();
+        internalData = `Today orders count: ${orders.length}.`;
+        navigationTarget = '/orders';
+      } else if (type === 'employees') {
+        const empCount = await Employee.countDocuments({ shop: shopId, isActive: true });
+        internalData = `Active employees: ${empCount}.`;
+        navigationTarget = '/employees';
+      }
+      break;
+    }
+
+    // ── ERROR / default ─────────────────────────────────────────────────────
+    case 'ERROR':
+    default:
+      break;
+  }
+
+  return { internalData, navigationTarget, refreshRequired, recommendation };
+}
+
+async function generateContentWithFallback(aiClient, options) {
+  const models = [
+    'gemini-2.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-3-flash-preview',
+    'gemini-3.1-flash-lite-preview',
+  ];
+  let lastError = null;
+
+  for (const modelName of models) {
+    let retries = 2; // Only retry 2 times max to prevent slow responses
+    let delay = 500;  // Start with 500ms delay to keep it lightning-fast
+
+    while (retries > 0) {
+      try {
+        const callOpts = { ...options, model: modelName };
+        return await aiClient.models.generateContent(callOpts);
+      } catch (err) {
+        console.warn(`[RetailFlow AI] Model ${modelName} call failed: ${err.message}. Retries left: ${retries - 1}`);
+        lastError = err;
+
+        const isRateLimit =
+          err.status === 429 ||
+          err.message?.includes('429') ||
+          err.message?.includes('RESOURCE_EXHAUSTED') ||
+          err.message?.includes('quota');
+        const isOverloaded =
+          err.status === 503 ||
+          err.message?.includes('503') ||
+          err.message?.includes('high demand') ||
+          err.message?.includes('UNAVAILABLE');
+
+        if (isRateLimit || isOverloaded) {
+          retries--;
+          if (retries > 0) {
+            console.log(`[RetailFlow AI] Rate-limited. Waiting ${delay}ms before retrying ${modelName}...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            delay *= 2; // exponential backoff (500ms -> 1000ms)
+            continue;
+          }
+        }
+        break; // break early for other errors to instantly swap models
+      }
+    }
+  }
+  throw lastError;
+}
+
+// MAIN CONTROLLER EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
+exports.processVoiceCommand = async (req, res) => {
+  try {
+    if (!ai) {
+      return res.status(500).json({
+        message: 'AI Assistant is not configured — GEMINI_API_KEY is missing.',
+      });
+    }
+
+    const { text, history } = req.body;
+    if (!text) return res.status(400).json({ message: 'No text provided.' });
+
+    const shopId = req.user.id; // Mongoose auto-casts string → ObjectId in queries
+
+    // ── A: Fetch live context data (utilizes 0ms in-memory cache) ──────────
+    const { lowStockList, pairingRules, dailySales, allProducts } =
+      await fetchContextData(shopId);
+
+    // ── B: Build data-enriched system prompt ──────────────────────────────
+    const systemPrompt = buildSystemPrompt(allProducts, lowStockList, pairingRules, dailySales);
+
+    // ── C: Build conversation context (last 6 turns max) ──────────────────
+    let promptContext = `User: ${text}`;
+    if (history && history.length > 0) {
+      const recentHistory = history.slice(-6);
+      promptContext =
+        recentHistory.map((h) => `${h.role}: ${h.content}`).join('\n') +
+        `\nUser: ${text}`;
+    }
+
+    // ── D: Classify intent via Gemini with dynamic fallback ────────────────
+    const llmResponse = await generateContentWithFallback(ai, {
       contents: promptContext,
       config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-      }
+        systemInstruction:  systemPrompt,
+        responseMimeType:   'application/json',
+      },
     });
 
     let aiResult;
     try {
-      let rawText = response.text;
-      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-      aiResult = JSON.parse(rawText);
+      const raw = llmResponse.text.replace(/```json/g, '').replace(/```/g, '').trim();
+      aiResult  = JSON.parse(raw);
     } catch (e) {
-      return res.status(500).json({ message: "Failed to parse AI response", error: e.message });
+      return res.status(500).json({
+        message: 'Failed to parse AI JSON response.',
+        error:   e.message,
+      });
     }
 
-    // Step 2: Backend Internal Actions (The Agent Logic)
-    if (aiResult.internalAction && aiResult.internalAction.actionType) {
-        const { actionType, payload } = aiResult.internalAction;
-        let internalData = null;
+    const { intent = 'ERROR', data = {} } = aiResult;
 
-        if (actionType === 'GET_REVENUE') {
-            const today = new Date();
-            today.setHours(0,0,0,0);
-            const sales = await Sale.find({ createdAt: { $gte: today }});
-            const totalRev = sales.reduce((sum, s) => sum + s.finalAmount, 0);
-            internalData = `Today's Revenue is ₹${totalRev}`;
-        }
-        else if (actionType === 'GET_LOW_STOCK') {
-            const lowStock = await Product.find({ quantity: { $lte: 5 }});
-            internalData = `There are ${lowStock.length} items low on stock.`;
-            aiResult.navigationTarget = '/inventory';
-        }
-        else if (actionType === 'GET_PRODUCT_STOCK' && payload.productName) {
-            const product = await Product.findOne({ shop: req.user.id, name: { $regex: new RegExp(payload.productName, 'i') } });
-            if (product) {
-                internalData = `${product.name} ka inventory me ${product.quantity} ${product.unit || 'pcs'} stock bacha hai.`;
-            } else {
-                internalData = `${payload.productName} inventory me nahi mila.`;
-            }
-            aiResult.navigationTarget = '/inventory';
-        }
-        else if (actionType === 'GET_ORDERS') {
-            const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
-            const orders = await Order.find({ shop: req.user.id, createdAt: { $gte: startOfDay } });
-            internalData = `Aaj total ${orders.length} orders aaye hain.`;
-            aiResult.navigationTarget = '/orders';
-        }
-        else if (actionType === 'GET_EMPLOYEES') {
-            const employees = await Employee.find({ shop: req.user.id });
-            const absentCount = await Attendance.countDocuments({ date: { $gte: new Date().setHours(0,0,0,0) }, status: 'Absent' });
-            internalData = `You have ${employees.length} employees. ${absentCount} are absent today.`;
-            aiResult.navigationTarget = '/employees';
-        }
-        else if (actionType === 'MARK_ATTENDANCE' && payload.employeeName && payload.status) {
-            const emp = await Employee.findOne({ shop: req.user.id, name: { $regex: new RegExp(payload.employeeName, 'i') } });
-            if (emp) {
-                await Attendance.create({ employee: emp._id, status: payload.status, date: new Date() });
-                internalData = `Attendance marked ${payload.status} for ${emp.name}`;
-                aiResult.refreshRequired = true;
-            } else {
-                internalData = `Employee ${payload.employeeName} not found in database.`;
-            }
-        }
-        else if (actionType === 'ADD_EMPLOYEE' && payload.employeeName) {
-            await Employee.create({
-                shop: req.user.id,
-                name: payload.employeeName,
-                salary: payload.salary || 0
-            });
-            internalData = `Successfully added new employee named ${payload.employeeName}.`;
-            aiResult.refreshRequired = true;
-            aiResult.navigationTarget = '/employees';
-        }
-        else if (actionType === 'CREATE_ORDER' && payload.productName && payload.quantity) {
-            const product = await Product.findOne({ shop: req.user.id, name: { $regex: new RegExp(payload.productName, 'i') } });
-            if (!product) {
-                internalData = `Product ${payload.productName} inventory me nahi mila.`;
-            } else {
-                const subtotal = product.sellingPrice * payload.quantity;
-                await Order.create({
-                    shop: req.user.id,
-                    customer: { name: payload.customerName || 'Walk-in' },
-                    items: [{
-                        product: product._id,
-                        productName: product.name,
-                        unitPrice: product.sellingPrice,
-                        costPrice: product.costPrice,
-                        quantity: payload.quantity,
-                        subtotal: subtotal
-                    }],
-                    totalAmount: subtotal,
-                    finalAmount: subtotal
-                });
-                product.quantity = Math.max(0, product.quantity - payload.quantity);
-                await product.save();
-                internalData = `Order ban gaya for ${payload.quantity} ${product.name}. Total amount ₹${subtotal}.`;
-                aiResult.refreshRequired = true;
-                aiResult.navigationTarget = '/orders';
-            }
-        }
-        else if (actionType === 'ADD_PRODUCT' && payload.productName && payload.price && payload.quantity !== undefined) {
-            // Add product logic (satisfying ProductSchema)
-            await Product.create({
-                shop: req.user.id, // Auth middleware must provide req.user
-                name: payload.productName,
-                costPrice: payload.price,       // Assuming spoken price is both for simplicity or cost
-                sellingPrice: payload.price,    // Same here unless LLM splits them
-                quantity: payload.quantity,
-                unit: payload.unit || 'pcs'
-            });
-            internalData = `Successfully added ${payload.quantity} ${payload.productName} at price ${payload.price}.`;
-            aiResult.refreshRequired = true;
-            aiResult.navigationTarget = '/inventory';
-        }
+    // ── E: Execute DB action (and pass aiResult to allow dynamic spokenResponse injection) 
+    const { internalData, navigationTarget, refreshRequired, recommendation } =
+      await executeAction(intent, data, shopId, pairingRules, aiResult);
 
-        // Step 3: If we performed an action, ask LLM to generate the final spoken response based on real data
-        if (internalData) {
-            try {
-                const followUpResponse = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: `Original Request: "${text}". \nSystem Result: "${internalData}". \n\nGenerate ONLY a natural Hinglish spoken response representing this system result.`
-                });
-                aiResult.spokenResponse = followUpResponse.text.trim();
-            } catch (err) {
-                console.error("Follow-up AI failed:", err.message);
-                aiResult.spokenResponse = "Action successful, but I'm currently experiencing high network demand.";
-            }
-        }
+    // ── F: High-Speed Response optimization: 
+    // Only invoke Gemini a second time if the first turn did not yield a spokenResponse!
+    if (internalData && !aiResult.spokenResponse) {
+      try {
+        console.log('[RetailFlow AI] Running fallback sequential spokenResponse call...');
+        const spokenRes = await generateContentWithFallback(ai, {
+          contents:
+            `User ne poocha: "${text}"\n` +
+            `System ne fetch kiya: "${internalData}"\n\n` +
+            `Sirf ek ultra-brief spoken response generate karo. Keep it strictly under 10 words. Reply in the exact same language (Hindi or English).`,
+        });
+        aiResult.spokenResponse = spokenRes.text.trim();
+      } catch (err) {
+        console.error('[RetailFlow AI] Follow-up Gemini call failed:', err.message);
+        aiResult.spokenResponse = internalData;
+      }
     }
 
-    // Send final JSON to frontend
-    res.json(aiResult);
+    // ── G: DB-computed recommendation overrides LLM suggestion ────────────
+    if (recommendation) {
+      aiResult.recommendation = recommendation;
+    }
+
+    // ── H: Return enriched, backward-compatible response to frontend ───────
+    return res.json({
+      intent:          aiResult.intent          || intent,
+      data:            aiResult.data            || data,
+      recommendation:  aiResult.recommendation  || null,
+      spokenResponse:  aiResult.spokenResponse  || 'Done.',
+      navigationTarget: navigationTarget         || null,
+      refreshRequired:  refreshRequired          || false,
+      requiresFollowUp: !!aiResult.requiresFollowUp,
+    });
 
   } catch (error) {
-    console.error('AI Processing Error:', error);
-    const msg = error?.status === 503 || error?.message?.includes('503') 
-        ? "AI provider is currently overloaded (503). Please try again in a moment."
-        : "Internal server error";
-    res.status(500).json({ message: msg, error: error.message });
+    console.error('[RetailFlow AI] Processing error:', error);
+    const is503 =
+      error?.status === 503 || (error?.message || '').includes('503');
+    const message = is503
+      ? 'AI provider is overloaded (503). Thodi der baad try karein.'
+      : 'Voice command process karne mein error aaya.';
+    return res.status(500).json({ message, error: error.message });
   }
 };
