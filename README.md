@@ -3,8 +3,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-v18%2B-green.svg)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/React-Latest-blue.svg)](https://react.dev/)
+[![Kafka](https://img.shields.io/badge/Kafka-Message_Streaming-red.svg)](https://kafka.apache.org/)
+[![Redis](https://img.shields.io/badge/Redis-Caching-brightgreen.svg)](https://redis.io/)
 
-RetailFlow is a **full-stack shop management system** that digitizes retail operations by replacing manual ledgers with a unified, intelligent dashboard. Built with **Node.js + Express + MongoDB** (backend) and **React + Vite** (frontend), it empowers shop owners to manage inventory, orders, finances, and employees—all from one seamless platform.
+RetailFlow is a **full-stack shop management system** that digitizes retail operations by replacing manual ledgers with a unified, intelligent dashboard. Built with **Node.js + Express + MongoDB** (backend), **React + Vite** (frontend), with **Kafka** for event streaming and **Redis** for high-performance caching.
 
 ---
 
@@ -27,12 +29,14 @@ RetailFlow is a **full-stack shop management system** that digitizes retail oper
 - Automatic inventory deduction with atomic transactions
 - Order status tracking
 - Order history and analytics
+- Event-driven order updates via Kafka
 
 ### 💰 Financial Analytics
 - Daily sales tracking
 - Monthly profit reports
 - Revenue trends with visual charts
 - Financial insights & reporting
+- Cached analytics for faster queries
 
 ### 👥 Employee Management
 - Staff directory and profiles
@@ -45,6 +49,7 @@ RetailFlow is a **full-stack shop management system** that digitizes retail oper
 - Secure owner signup/login
 - Role-based access control
 - Password hashing with bcrypt
+- Redis-based session management
 
 ---
 
@@ -54,6 +59,8 @@ RetailFlow is a **full-stack shop management system** that digitizes retail oper
 - **Runtime**: Node.js v18+
 - **Framework**: Express.js
 - **Database**: MongoDB
+- **Message Queue**: Apache Kafka (event streaming & asynchronous processing)
+- **Caching**: Redis (high-performance caching, sessions, real-time updates)
 - **Authentication**: JWT (JSON Web Tokens)
 - **Security**: bcrypt password hashing
 - **API**: RESTful API (versioned /api/v1/)
@@ -72,7 +79,7 @@ RetailFlow is a **full-stack shop management system** that digitizes retail oper
 ```
 RetailFlow/
 ├── backend/
-│   ├── config/              # Database & environment configuration
+│   ├── config/              # Database, Kafka, Redis configuration
 │   ├── controllers/         # Business logic layer
 │   │   ├── auth.js         # Authentication logic
 │   │   ├── products.js     # Inventory operations
@@ -95,6 +102,9 @@ RetailFlow/
 │   │   ├── orders.js
 │   │   ├── sales.js
 │   │   └── employees.js
+│   ├── services/            # Business logic & external integrations
+│   │   ├── kafkaService.js # Kafka event handling
+│   │   └── redisService.js # Redis caching operations
 │   ├── utils/               # Helper utilities
 │   │   └── ErrorResponse.js
 │   ├── server.js            # Express app entry point
@@ -128,9 +138,45 @@ RetailFlow/
 ### Prerequisites
 - **Node.js** v18 or higher
 - **MongoDB** (running locally or on MongoDB Atlas)
+- **Apache Kafka** (for event streaming)
+- **Redis** (for caching & sessions)
 - **npm** or **yarn** package manager
 
-### 1️⃣ Backend Setup
+### 1️⃣ Start Dependencies
+
+#### MongoDB
+```bash
+# macOS/Linux
+mongod
+
+# Windows (if installed as service)
+net start MongoDB
+```
+
+#### Kafka (Ensure Zookeeper & Kafka are running)
+```bash
+# macOS/Linux using Homebrew
+brew services start zookeeper
+brew services start kafka
+
+# Or manually start:
+$KAFKA_HOME/bin/zookeeper-server-start.sh $KAFKA_HOME/config/zookeeper.properties
+$KAFKA_HOME/bin/kafka-server-start.sh $KAFKA_HOME/config/server.properties
+```
+
+#### Redis
+```bash
+# macOS/Linux
+redis-server
+
+# Windows
+redis-server.exe
+
+# Or Docker
+docker run -d -p 6379:6379 redis:latest
+```
+
+### 2️⃣ Backend Setup
 
 ```bash
 # Navigate to backend directory
@@ -142,11 +188,19 @@ npm install
 # Create .env file from template
 cp .env.example .env
 
-# Update .env with your MongoDB connection string and other config
+# Update .env with your configuration
 # Example:
 # MONGODB_URI=mongodb://localhost:27017/retailflow
-# JWT_SECRET=your-secret-key
+# JWT_SECRET=your-super-secret-jwt-key
+# JWT_EXPIRE=7d
 # PORT=5000
+# NODE_ENV=development
+# CORS_ORIGIN=http://localhost:5173
+# KAFKA_BROKERS=localhost:9092
+# KAFKA_GROUP_ID=retailflow-group
+# REDIS_HOST=localhost
+# REDIS_PORT=6379
+# REDIS_PASSWORD=
 
 # Start the development server
 npm run dev
@@ -154,7 +208,7 @@ npm run dev
 
 Backend runs at: `http://localhost:5000`
 
-### 2️⃣ Frontend (Web) Setup
+### 3️⃣ Frontend (Web) Setup
 
 ```bash
 # Navigate to frontend directory
@@ -206,12 +260,32 @@ curl -X POST http://localhost:5000/api/v1/auth/login \
 
 ### Backend (.env)
 ```
+# Database
 MONGODB_URI=mongodb://localhost:27017/retailflow
+
+# Authentication
 JWT_SECRET=your-super-secret-jwt-key
 JWT_EXPIRE=7d
+
+# Server
 PORT=5000
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
+
+# Kafka (Event Streaming)
+KAFKA_BROKERS=localhost:9092
+KAFKA_GROUP_ID=retailflow-group
+KAFKA_CLIENT_ID=retailflow-client
+
+# Redis (Caching & Sessions)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+REDIS_TTL=3600
+
+# Business Logic
+STOCK_THRESHOLD=10
 ```
 
 ### Frontend (.env)
@@ -228,6 +302,8 @@ VITE_API_URL=http://localhost:5000
 - MongoDB & Mongoose (database & ODM)
 - bcryptjs (password hashing)
 - jsonwebtoken (JWT authentication)
+- kafkajs (Kafka client for event streaming)
+- redis (Redis client for caching)
 - cors (cross-origin requests)
 - dotenv (environment variables)
 
@@ -237,6 +313,55 @@ VITE_API_URL=http://localhost:5000
 - Axios (HTTP client)
 - React Router (navigation)
 - Chart.js or Recharts (data visualization)
+
+---
+
+## 🔄 Event Streaming with Kafka
+
+RetailFlow uses Apache Kafka for asynchronous event processing:
+
+### Events Published
+- **order.created** - When a new order is placed
+- **order.completed** - When an order is fulfilled
+- **inventory.updated** - When stock levels change
+- **sales.recorded** - When a sale is finalized
+
+### Example Kafka Usage
+```javascript
+// Publish event
+await kafkaService.publishEvent('order.created', {
+  orderId: '123',
+  items: [...],
+  timestamp: new Date()
+});
+
+// Subscribe to events
+kafkaService.subscribeToTopic('order.completed', (message) => {
+  console.log('Order completed:', message);
+});
+```
+
+---
+
+## ⚡ Caching with Redis
+
+Redis is used for:
+- **Session Management**: User authentication tokens
+- **Real-time Updates**: Cached dashboard metrics
+- **Performance**: Frequently accessed inventory data
+- **Rate Limiting**: API request throttling
+
+### Example Redis Usage
+```javascript
+// Set cache
+await redisService.set('product:123', productData, 3600);
+
+// Get from cache
+const cached = await redisService.get('product:123');
+
+// Clear cache
+await redisService.delete('product:123');
+```
 
 ---
 
@@ -256,6 +381,8 @@ VITE_API_URL=http://localhost:5000
 - Use **Postman** or **Thunder Client** to test API endpoints
 - Use **React DevTools** for frontend debugging
 - Use **MongoDB Compass** for database inspection
+- Use **Kafka UI** or **Kafdrop** for Kafka topic monitoring
+- Use **Redis Desktop Manager** or **redis-cli** for Redis inspection
 
 ### Automated Testing (To be implemented)
 ```bash
@@ -274,6 +401,18 @@ npm test --prefix frontend
 - Ensure MongoDB is running: `mongod` (macOS/Linux) or `net start MongoDB` (Windows)
 - Check connection string in `.env`
 - Verify MongoDB is accessible on the correct port (default: 27017)
+
+### Kafka Connection Issues
+- Ensure Kafka broker is running on the configured host/port
+- Check `KAFKA_BROKERS` in `.env`
+- Verify Zookeeper is running (Kafka dependency)
+- Use `kafka-topics.sh` to verify topics exist
+
+### Redis Connection Issues
+- Ensure Redis server is running: `redis-server`
+- Check `REDIS_HOST` and `REDIS_PORT` in `.env`
+- Verify Redis is accessible: `redis-cli ping` (should return PONG)
+- Check authentication if `REDIS_PASSWORD` is set
 
 ### CORS Errors
 - Ensure `CORS_ORIGIN` in backend `.env` matches your frontend URL
@@ -296,6 +435,8 @@ taskkill /PID <PID> /F
 - [Express.js Documentation](https://expressjs.com/)
 - [React Documentation](https://react.dev/)
 - [MongoDB Documentation](https://docs.mongodb.com/)
+- [Apache Kafka Documentation](https://kafka.apache.org/documentation/)
+- [Redis Documentation](https://redis.io/documentation)
 - [Vite Documentation](https://vitejs.dev/)
 
 ---
