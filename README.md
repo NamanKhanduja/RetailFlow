@@ -1,6 +1,5 @@
 # RetailFlow — Unified Shop Management System
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-v18%2B-green.svg)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/React-Latest-blue.svg)](https://react.dev/)
 [![Kafka](https://img.shields.io/badge/Kafka-Message_Streaming-red.svg)](https://kafka.apache.org/)
