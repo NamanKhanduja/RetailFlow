@@ -3,9 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-v18%2B-green.svg)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/React-Latest-blue.svg)](https://react.dev/)
-[![Flutter](https://img.shields.io/badge/Flutter-Latest-blue.svg)](https://flutter.dev/)
 
-RetailFlow is a **full-stack, cross-platform shop management system** that digitizes retail operations by replacing manual ledgers with a unified, intelligent dashboard. Built with **Node.js + Express + MongoDB** (backend), **React + Vite** (web frontend), and **Flutter** (mobile), it empowers shop owners to manage inventory, orders, finances, and employees—all from one seamless platform.
+RetailFlow is a **full-stack shop management system** that digitizes retail operations by replacing manual ledgers with a unified, intelligent dashboard. Built with **Node.js + Express + MongoDB** (backend) and **React + Vite** (frontend), it empowers shop owners to manage inventory, orders, finances, and employees—all from one seamless platform.
 
 ---
 
@@ -66,12 +65,6 @@ RetailFlow is a **full-stack, cross-platform shop management system** that digit
 - **State Management**: React Context API
 - **Styling**: CSS
 
-### Mobile App
-- **Framework**: Flutter
-- **Platforms**: iOS & Android
-- **Navigation**: Flutter Navigator
-- **State Management**: Provider/BLoC pattern
-
 ---
 
 ## 📁 Project Structure
@@ -107,32 +100,25 @@ RetailFlow/
 │   ├── server.js            # Express app entry point
 │   └── .env.example         # Environment variables template
 │
-├── frontend/
-│   ├── src/
-│   │   ├── api/             # Axios instance & API calls
-│   │   ├── components/      # Reusable React components
-│   │   │   ├── Sidebar.jsx
-│   │   │   └── Layout.jsx
-│   │   ├── context/         # React Context providers
-│   │   │   └── AuthContext.jsx
-│   │   ├── pages/           # Page components
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── Inventory.jsx
-│   │   │   ├── Orders.jsx
-│   │   │   ├── Finance.jsx
-│   │   │   └── Employees.jsx
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── vite.config.js
-│   ├── package.json
-│   └── .env.example
-│
-└── flutter_app/             # Mobile app
-    ├── lib/
-    │   ├── screens/         # App screens
-    │   ├── services/        # API communication
-    │   └── main.dart
-    └── pubspec.yaml
+└── frontend/
+    ├── src/
+    │   ├── api/             # Axios instance & API calls
+    │   ├── components/      # Reusable React components
+    │   │   ├── Sidebar.jsx
+    │   │   └── Layout.jsx
+    │   ├── context/         # React Context providers
+    │   │   └── AuthContext.jsx
+    │   ├── pages/           # Page components
+    │   │   ├── Dashboard.jsx
+    │   │   ├── Inventory.jsx
+    │   │   ├── Orders.jsx
+    │   │   ├── Finance.jsx
+    │   │   └── Employees.jsx
+    │   ├── App.jsx
+    │   └── main.jsx
+    ├── vite.config.js
+    ├── package.json
+    └── .env.example
 ```
 
 ---
@@ -142,7 +128,6 @@ RetailFlow/
 ### Prerequisites
 - **Node.js** v18 or higher
 - **MongoDB** (running locally or on MongoDB Atlas)
-- **Flutter** SDK (for mobile development)
 - **npm** or **yarn** package manager
 
 ### 1️⃣ Backend Setup
@@ -190,19 +175,6 @@ npm run dev
 ```
 
 Frontend runs at: `http://localhost:5173`
-
-### 3️⃣ Mobile App Setup (Optional)
-
-```bash
-# Navigate to flutter app directory
-cd flutter_app
-
-# Get dependencies
-flutter pub get
-
-# Run on connected device or emulator
-flutter run
-```
 
 ---
 
@@ -266,11 +238,6 @@ VITE_API_URL=http://localhost:5000
 - React Router (navigation)
 - Chart.js or Recharts (data visualization)
 
-**Mobile**:
-- Flutter SDK
-- Dart language
-- http (API calls)
-
 ---
 
 ## 🔄 Development Workflow
@@ -329,7 +296,6 @@ taskkill /PID <PID> /F
 - [Express.js Documentation](https://expressjs.com/)
 - [React Documentation](https://react.dev/)
 - [MongoDB Documentation](https://docs.mongodb.com/)
-- [Flutter Documentation](https://flutter.dev/docs)
 - [Vite Documentation](https://vitejs.dev/)
 
 ---
