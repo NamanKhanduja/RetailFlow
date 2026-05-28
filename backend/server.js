@@ -6,13 +6,15 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
 const connectDB = require('./config/db');
+const { connectProducer, disconnectProducer } = require('./config/kafka');
 const errorHandler = require('./middleware/errorHandler');
 
 // ─── Load Environment Variables ───────────────────────────────────────────────
 dotenv.config();
 
-// ─── Connect to MongoDB ────────────────────────────────────────────────────────
+// Connect to MongoDB & Kafka Producer
 connectDB();
+connectProducer();
 
 // ─── Initialize Express ────────────────────────────────────────────────────────
 const app = express();
@@ -90,3 +92,17 @@ process.on('unhandledRejection', (err) => {
   console.error(`💥 Unhandled Rejection: ${err.message}`);
   server.close(() => process.exit(1));
 });
+
+// Graceful Shutdown hooks for Kafka and HTTP connections
+const handleShutdown = async (signal) => {
+  console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+  server.close(async () => {
+    console.log('HTTP Server closed.');
+    await disconnectProducer();
+    console.log('Shutdown process complete. Exiting.');
+    process.exit(0);
+  });
+};
+
+process.on('SIGINT', () => handleShutdown('SIGINT'));
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
